@@ -10,12 +10,6 @@ import '../services.dart';
 import '../theme.dart';
 import '../widgets.dart';
 
-class AiMessage {
-  final String role; // user | assistant
-  String content;
-  AiMessage(this.role, this.content);
-}
-
 class AiScreen extends StatefulWidget {
   final SettingsModel settings;
   final VoidCallback onOpenSettings;
@@ -249,7 +243,6 @@ class AiScreenState extends State<AiScreen> {
         pendingFile = line.substring(3).trim();
       }
       if (line.trim().startsWith('```')) {
-        final lang = line.trim().substring(3).trim();
         final buf = <String>[];
         i++;
         while (i < lines.length && !lines[i].trim().startsWith('```')) {

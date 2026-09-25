@@ -14,7 +14,6 @@ import 'package:webview_flutter/webview_flutter.dart';
 
 import 'services.dart';
 import 'theme.dart';
-import 'widgets.dart';
 
 class EditorScreen extends StatefulWidget {
   final SettingsModel settings;
