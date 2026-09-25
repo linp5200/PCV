@@ -1,20 +1,22 @@
-// PCV · 首页（工作区卡片 / 快捷功能 / 最近打开）
+// PCV · 首页（项目卡片 / 快捷功能 / 最近打开）
 import 'package:flutter/material.dart';
 
+import '../editor_screen.dart';
 import '../services.dart';
 import '../theme.dart';
-import '../editor_screen.dart';
 import '../widgets.dart';
 
 class HomeScreen extends StatefulWidget {
   final SettingsModel settings;
   final VoidCallback onOpenFiles;
   final VoidCallback onOpenSearch;
+  final VoidCallback onOpenAi;
   const HomeScreen({
     super.key,
     required this.settings,
     required this.onOpenFiles,
     required this.onOpenSearch,
+    required this.onOpenAi,
   });
 
   @override
@@ -22,21 +24,21 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  final ws = WorkspaceService.instance;
+  final ps = ProjectsService.instance;
 
   @override
   void initState() {
     super.initState();
-    ws.addListener(_onWs);
+    ps.addListener(_onPs);
   }
 
   @override
   void dispose() {
-    ws.removeListener(_onWs);
+    ps.removeListener(_onPs);
     super.dispose();
   }
 
-  void _onWs() {
+  void _onPs() {
     if (mounted) setState(() {});
   }
 
@@ -48,7 +50,7 @@ class _HomeScreenState extends State<HomeScreen> {
       body: ListView(
         padding: const EdgeInsets.only(bottom: 24),
         children: [
-          _workspaceCard(context),
+          _projectCard(context),
           const SectionLabel('常用功能'),
           _quickGrid(context),
           if (widget.settings.recent.isNotEmpty) ...[
@@ -71,10 +73,10 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _workspaceCard(BuildContext context) {
+  Widget _projectCard(BuildContext context) {
     final p = palOf(context);
     final accent = Theme.of(context).colorScheme.primary;
-    final ready = ws.phase == WPhase.ready;
+    final ready = ps.loaded && ps.current != null;
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
@@ -98,36 +100,40 @@ class _HomeScreenState extends State<HomeScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        '源码工作区',
+                        ps.current?.name ?? '项目',
                         style: TextStyle(
                           fontSize: 15.5,
                           fontWeight: FontWeight.w700,
                           color: p.t1,
                         ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                       ),
                       const SizedBox(height: 2),
                       Text(
                         ready
-                            ? 'LINGOS ${ws.meta['version'] ?? ''} · '
-                                  '${ws.meta['file_count'] ?? 0} 个文件 · '
-                                  '${fmtBytes((ws.meta['byte_count'] as int?) ?? 0)}'
-                            : ws.phase == WPhase.error
+                            ? (ps.current!.builtin
+                                  ? 'LINGOS ${ps.current!.version} · ${ps.current!.fileCount} 个文件 · 内置'
+                                  : '${ps.current!.fileCount} 个文件 · 自建项目')
+                            : ps.error != null
                             ? '初始化失败'
                             : '正在准备…',
                         style: TextStyle(fontSize: 12, color: p.t3),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                       ),
                     ],
                   ),
                 ),
-                _wsStatus(context, ready),
+                _wsStatus(context),
               ],
             ),
-            const SizedBox(height: 14),
-            if (!ready && ws.phase != WPhase.error) ...[
+            if (ps.unpacking) ...[
+              const SizedBox(height: 14),
               ClipRRect(
                 borderRadius: BorderRadius.circular(4),
                 child: LinearProgressIndicator(
-                  value: ws.phase == WPhase.unpacking ? ws.progress : null,
+                  value: ps.progress,
                   minHeight: 5,
                   backgroundColor: p.border,
                   color: accent,
@@ -135,33 +141,28 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               const SizedBox(height: 8),
               Text(
-                ws.phase == WPhase.unpacking
-                    ? '正在解压内置源码… ${(ws.progress * 100).toStringAsFixed(0)}%'
-                    : '正在检查内置源码…',
+                '正在解压内置源码… ${(ps.progress * 100).toStringAsFixed(0)}%',
                 style: TextStyle(fontSize: 12, color: p.t3),
               ),
             ],
-            if (ws.phase == WPhase.error) ...[
+            if (ps.error != null) ...[
+              const SizedBox(height: 10),
               Text(
-                ws.error ?? '未知错误',
+                ps.error!,
                 style: TextStyle(fontSize: 12, color: p.red),
-                maxLines: 3,
+                maxLines: 2,
                 overflow: TextOverflow.ellipsis,
-              ),
-              const SizedBox(height: 8),
-              OutlinedButton(
-                onPressed: () => ws.ensure(force: true),
-                child: const Text('重试'),
               ),
             ],
             if (ready) ...[
+              const SizedBox(height: 14),
               Row(
                 children: [
                   Expanded(
                     child: FilledButton.icon(
                       onPressed: widget.onOpenFiles,
                       icon: const Icon(Icons.folder_open_rounded, size: 18),
-                      label: const Text('浏览源码'),
+                      label: const Text('浏览代码'),
                       style: FilledButton.styleFrom(
                         padding: const EdgeInsets.symmetric(vertical: 12),
                         shape: RoundedRectangleBorder(
@@ -173,9 +174,9 @@ class _HomeScreenState extends State<HomeScreen> {
                   const SizedBox(width: 10),
                   Expanded(
                     child: OutlinedButton.icon(
-                      onPressed: widget.onOpenSearch,
-                      icon: const Icon(Icons.search_rounded, size: 18),
-                      label: const Text('搜索代码'),
+                      onPressed: _showProjectSwitcher,
+                      icon: const Icon(Icons.swap_horiz_rounded, size: 18),
+                      label: const Text('切换项目'),
                       style: OutlinedButton.styleFrom(
                         padding: const EdgeInsets.symmetric(vertical: 12),
                         side: BorderSide(color: p.border2),
@@ -194,16 +195,234 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _wsStatus(BuildContext context, bool ready) {
+  Widget _wsStatus(BuildContext context) {
     final p = palOf(context);
-    if (ws.phase == WPhase.error) {
+    if (ps.error != null) {
       return Pill(text: '异常', fg: p.red, bg: tintOf(p.red, p.dark));
     }
-    if (!ready) {
+    if (!ps.loaded || ps.unpacking) {
       return Pill(text: '准备中', fg: p.yellow, bg: tintOf(p.yellow, p.dark));
     }
     return Pill(text: '● 已就绪', fg: p.green, bg: tintOf(p.green, p.dark));
   }
+
+  // ---------- 项目切换 ----------
+
+  void _showProjectSwitcher() {
+    final p = palOf(context);
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: p.elev,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 36,
+              height: 4,
+              margin: const EdgeInsets.only(top: 10, bottom: 8),
+              decoration: BoxDecoration(
+                color: p.border2,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 2, 20, 8),
+              child: Row(
+                children: [
+                  Text(
+                    '选择项目',
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                      color: p.t1,
+                    ),
+                  ),
+                  const Spacer(),
+                  TextButton.icon(
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                      _createProjectDialog();
+                    },
+                    icon: Icon(
+                      Icons.add_rounded,
+                      size: 18,
+                      color: Theme.of(ctx).colorScheme.primary,
+                    ),
+                    label: Text(
+                      '新建项目',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Theme.of(ctx).colorScheme.primary,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Flexible(
+              child: ListView(
+                shrinkWrap: true,
+                children: [for (final proj in ps.projects) _projectRow(proj)],
+              ),
+            ),
+            const SizedBox(height: 10),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _projectRow(Project proj) {
+    final p = palOf(context);
+    final accent = Theme.of(context).colorScheme.primary;
+    final sel = proj.id == ps.currentId;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () {
+          ps.switchTo(proj.id);
+          Navigator.pop(context);
+          // 最近打开列表按项目隔离——切换时清空
+          widget.settings.clearRecent();
+        },
+        child: Container(
+          margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 3),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            color: sel ? tintOf(accent, p.dark) : Colors.transparent,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: sel ? accent.withValues(alpha: .45) : p.border,
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                proj.builtin
+                    ? Icons.inventory_2_outlined
+                    : Icons.folder_outlined,
+                size: 19,
+                color: sel ? accent : p.t2,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      proj.name,
+                      style: TextStyle(
+                        fontSize: 13.5,
+                        fontWeight: sel ? FontWeight.w700 : FontWeight.w500,
+                        color: p.t1,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    Text(
+                      proj.builtin
+                          ? 'LINGOS ${proj.version} · ${proj.fileCount} 个文件'
+                          : '${proj.fileCount} 个文件',
+                      style: TextStyle(fontSize: 11.5, color: p.t3),
+                    ),
+                  ],
+                ),
+              ),
+              if (sel)
+                Icon(Icons.check_circle_rounded, size: 18, color: accent),
+              if (!proj.builtin && !sel)
+                IconButton(
+                  icon: Icon(
+                    Icons.delete_outline_rounded,
+                    size: 18,
+                    color: p.t3,
+                  ),
+                  onPressed: () => _deleteProject(proj),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _createProjectDialog() async {
+    final p = palOf(context);
+    final ctrl = TextEditingController();
+    final name = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: p.elev,
+        title: Text('新建项目', style: TextStyle(fontSize: 16, color: p.t1)),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          style: TextStyle(color: p.t1),
+          decoration: InputDecoration(
+            hintText: '项目名称（如：我的工具）',
+            hintStyle: TextStyle(color: p.t4, fontSize: 13.5),
+          ),
+          onSubmitted: (v) => Navigator.pop(ctx, v.trim()),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
+            child: const Text('创建'),
+          ),
+        ],
+      ),
+    );
+    if (name == null || name.isEmpty) return;
+    final proj = await ps.createProject(name);
+    ps.switchTo(proj.id);
+    if (mounted) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('项目「$name」已创建')));
+    }
+  }
+
+  Future<void> _deleteProject(Project proj) async {
+    final p = palOf(context);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: p.elev,
+        title: Text(
+          '删除项目「${proj.name}」？',
+          style: TextStyle(fontSize: 16, color: p.t1),
+        ),
+        content: Text(
+          '将删除该项目的全部文件（不可撤销）。',
+          style: TextStyle(fontSize: 13.5, color: p.t2, height: 1.6),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: p.red),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (ok == true) {
+      await ps.deleteProject(proj.id);
+    }
+  }
+
+  // ---------- 快捷功能 ----------
 
   Widget _quickGrid(BuildContext context) {
     final p = palOf(context);
@@ -221,19 +440,19 @@ class _HomeScreenState extends State<HomeScreen> {
         icon: Icons.auto_awesome_outlined,
         color: p.purple,
         title: 'AI 助手',
-        desc: '解释代码 · 辅助编写',
-        tag: '规划中',
-        tagColor: p.t3,
-        onTap: () => _soon(context, 'AI 助手'),
+        desc: '帮助（只读）· 编写（读改）',
+        tag: '已可用',
+        tagColor: p.green,
+        onTap: widget.onOpenAi,
       ),
       _Quick(
         icon: Icons.fact_check_outlined,
         color: p.yellow,
-        title: '检查',
-        desc: '语法与问题体检',
-        tag: '规划中',
-        tagColor: p.t3,
-        onTap: () => _soon(context, '代码检查'),
+        title: '语法检查',
+        desc: '编辑器内实时标错',
+        tag: '已内置',
+        tagColor: p.green,
+        onTap: () => _soon(context, '语法检查已内置于编辑器：打开任意文件即自动检查（波浪线 + 行号标记）'),
       ),
       _Quick(
         icon: Icons.sync_alt_rounded,
@@ -242,7 +461,7 @@ class _HomeScreenState extends State<HomeScreen> {
         desc: '构建 · 部署 · 回滚',
         tag: '规划中',
         tagColor: p.t3,
-        onTap: () => _soon(context, '设备连接与部署'),
+        onTap: () => _soon(context, '设备连接与部署（A4 批次）'),
       ),
     ];
     return Padding(
@@ -260,8 +479,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _soon(BuildContext context, String name) {
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text('$name：将在后续版本提供（A3/A4/A5 阶段）')));
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(name)));
   }
 
   Widget _recentCard(BuildContext context) {
@@ -288,7 +506,7 @@ class _HomeScreenState extends State<HomeScreen> {
       color: Colors.transparent,
       child: InkWell(
         onTap: () async {
-          if (ws.src == null) return;
+          if (ps.currentDir == null) return;
           widget.settings.touchRecent(rel);
           await EditorScreen.open(context, widget.settings, rel);
           if (mounted) setState(() {});

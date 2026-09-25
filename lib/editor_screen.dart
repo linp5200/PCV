@@ -1,13 +1,15 @@
 // PCV · 编辑器屏（WebView + CodeMirror 6 成熟内核）
-// 高亮/折叠/搜索/括号匹配 = CodeMirror 6；本页只做桥接与草稿
-// WebView 宿主 = 官方 webview_flutter 插件（Flutter 团队维护）
-import 'dart:async';
+// 高亮/折叠/搜索/括号匹配/语法检查(lint)/手势 = CM6 生态；本页只做桥接与保存逻辑
+//
+// 保存模型（先生确认）：
+//   · 点击「保存」→ 直接写回源文件（草稿仅作防丢失缓冲，不是主流程）
+//   · 有未保存修改才产生草稿；纯浏览不产生草稿
+//   · 退出时若有未保存修改 → 询问（保存并退出 / 仅退出 / 取消）
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
-import 'package:path_provider/path_provider.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import 'services.dart';
@@ -45,33 +47,33 @@ class EditorScreen extends StatefulWidget {
 
 class _EditorScreenState extends State<EditorScreen> {
   static String? _htmlCache;
-  static File? _htmlFileCache;
 
   WebViewController? _web;
-  bool _pageReady = false;
-  bool _readySent = false;
+  bool _webReady = false;
+  bool _fileSent = false;
   bool _leaving = false;
   bool _dirty = false;
   bool _draftRestored = false;
-  bool _hasDraft = false;
+  bool _saving = false;
 
   int _lines = 0;
   int _line = 1;
   int _col = 1;
-
   String? _loadError;
-  String? _pendingContent;
-  Timer? _draftTimer;
-
-  // ---------- 路径 ----------
 
   String get _rel => widget.rel;
 
-  File get _srcFile => File('${WorkspaceService.instance.src!.path}/$_rel');
+  Directory? get _root => ProjectsService.instance.currentDir;
 
-  Future<File> _draftFile() async {
-    final root = WorkspaceService.instance.root!.parent.path;
-    final d = Directory('$root/drafts');
+  File? get _srcFile {
+    final r = _root;
+    return r == null ? null : File('${r.path}/$_rel');
+  }
+
+  Future<File?> _draftFile() async {
+    final r = _root;
+    if (r == null) return null;
+    final d = Directory('${r.path}/.pcv_drafts');
     await d.create(recursive: true);
     final safe = _rel.replaceAll('/', '__');
     return File('${d.path}/$safe');
@@ -85,32 +87,36 @@ class _EditorScreenState extends State<EditorScreen> {
     _load();
   }
 
-  @override
-  void dispose() {
-    _draftTimer?.cancel();
-    super.dispose();
-  }
+  String? _pendingContent;
 
   Future<void> _load() async {
     try {
-      if (WorkspaceService.instance.src == null) {
-        throw Exception('工作区未就绪');
-      }
       final f = _srcFile;
+      if (f == null) throw Exception('项目未就绪');
       if (!await f.exists()) throw Exception('文件不存在：$_rel');
-      var content = await f.readAsString();
+      final original = await f.readAsString();
+      var content = original;
+
+      // 草稿恢复：仅当草稿与源文件不一致（=存在未保存修改）才恢复；
+      // 一致则视为"纯浏览残留"，直接清理（修复"浏览也标草稿"问题）
       final df = await _draftFile();
-      if (await df.exists()) {
-        content = await df.readAsString();
-        _draftRestored = true;
-        _hasDraft = true;
+      if (df != null && await df.exists()) {
+        final draft = await df.readAsString();
+        if (draft != original) {
+          content = draft;
+          _draftRestored = true;
+          _dirty = true;
+        } else {
+          try {
+            await df.delete();
+          } catch (_) {}
+        }
       }
       _pendingContent = content;
     } catch (e) {
       _loadError = '$e';
     }
     if (mounted) setState(() {});
-    // 两种时序都覆盖：①内容先到、页面后到（ready 事件触发）②页面先就绪、内容后到（此处触发）
     _bootWebView();
   }
 
@@ -120,75 +126,24 @@ class _EditorScreenState extends State<EditorScreen> {
     return _htmlCache!;
   }
 
-  /// 把内核 HTML 落到本地文件（跨屏复用——loadFile 比 loadHtmlString 更省通道）
-  Future<File> _htmlFile() async {
-    final cached = _htmlFileCache;
-    if (cached != null && await cached.exists()) return cached;
-    final html = await _editorHtml();
-    final docs = await getApplicationDocumentsDirectory();
-    final f = File('${docs.path}/pcv/editor.html');
-    await f.create(recursive: true);
-    final expected = utf8.encode(html).length;
-    if (!await f.exists() || (await f.length()) != expected) {
-      await f.writeAsString(html, flush: true);
-    }
-    _htmlFileCache = f;
-    return f;
-  }
-
-  Future<WebViewController> _ensureController() async {
-    final existing = _web;
-    if (existing != null) return existing;
-    final c = WebViewController()
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setBackgroundColor(const Color(0xFF1F2335))
-      ..addJavaScriptChannel(
-        'PcvBridge',
-        onMessageReceived: (msg) {
-          try {
-            final m = jsonDecode(msg.message);
-            if (m is Map) {
-              _onJsEvent(m['type']?.toString() ?? '', m['payload']);
-            }
-          } catch (_) {}
-        },
-      )
-      ..setNavigationDelegate(
-        NavigationDelegate(
-          onNavigationRequest: (req) => NavigationDecision.prevent,
-        ),
-      );
-    _web = c;
-    try {
-      final f = await _htmlFile();
-      await c.loadFile(f.path);
-    } catch (_) {
-      try {
-        final html = await _editorHtml();
-        await c.loadHtmlString(html);
-      } catch (_) {}
-    }
-    return c;
-  }
-
   Future<void> _bootWebView() async {
-    if (!_pageReady || _readySent) return;
+    final web = _web;
     final content = _pendingContent;
-    if (content == null) return;
-    _readySent = true;
+    if (web == null || !_webReady || _fileSent || content == null) return;
+    _fileSent = true;
     final dark = Theme.of(context).brightness == Brightness.dark;
     final js =
         'window.pcv.openFile('
         '${jsonEncode(_rel)}, ${jsonEncode(content)}, '
         '{"dark": $dark, "fontPx": ${widget.settings.codeFontSize}});';
     try {
-      await _web?.runJavaScript(js);
+      await web.runJavaScript(js);
       if (widget.jumpToLine != null && widget.jumpToLine! > 1) {
-        await _web?.runJavaScript('window.pcv.goToLine(${widget.jumpToLine});');
+        await web.runJavaScript('window.pcv.goToLine(${widget.jumpToLine});');
       }
       if (_draftRestored && mounted) {
         ScaffoldMessenger.of(context)
-            .showSnackBar(const SnackBar(content: Text('已恢复上次自动保存的草稿')));
+            .showSnackBar(const SnackBar(content: Text('已恢复未保存的修改')));
       }
     } catch (_) {}
   }
@@ -199,7 +154,7 @@ class _EditorScreenState extends State<EditorScreen> {
     if (!mounted) return;
     switch (type) {
       case 'ready':
-        _pageReady = true;
+        _webReady = true;
         _bootWebView();
         break;
       case 'fileOpened':
@@ -218,12 +173,18 @@ class _EditorScreenState extends State<EditorScreen> {
         }
         break;
       case 'changed':
-        if (payload is Map) {
-          final lines = (payload['lines'] as num?)?.toInt();
-          if (lines != null) _lines = lines;
-        }
+        // 真正有文档变更才到这里（CM6 docChanged）→ 写防丢失草稿
         _setDirty(true);
-        _scheduleDraftSave();
+        _saveDraftSoon();
+        break;
+      case 'fontChanged':
+        if (payload is Map) {
+          final px = (payload['fontPx'] as num?)?.toDouble();
+          if (px != null) widget.settings.setCodeFontSize(px);
+        }
+        break;
+      case 'indentDone':
+        // 缩进已完成——无需处理（可扩展：轻提示）
         break;
     }
   }
@@ -232,26 +193,22 @@ class _EditorScreenState extends State<EditorScreen> {
     if (_dirty != v && mounted) setState(() => _dirty = v);
   }
 
-  void _scheduleDraftSave() {
-    _draftTimer?.cancel();
-    _draftTimer = Timer(const Duration(milliseconds: 1200), () async {
-      final c = await _grabContent();
-      if (c != null) {
-        await _saveDraft(c);
-        _setDirty(false);
-      }
-    });
-  }
-
-  Future<void> _saveDraft(String content) async {
+  // 草稿防丢失（延迟 900ms 拉取，避免频繁跨桥）
+  bool _draftTimerActive = false;
+  Future<void> _saveDraftSoon() async {
+    if (_draftTimerActive) return;
+    _draftTimerActive = true;
+    await Future<void>.delayed(const Duration(milliseconds: 900));
+    _draftTimerActive = false;
+    if (!mounted || !_dirty) return;
+    final c = await _grabContent();
+    if (c == null) return;
     try {
       final df = await _draftFile();
-      await df.writeAsString(content, flush: false);
-      _hasDraft = true;
+      await df?.writeAsString(c, flush: false);
     } catch (_) {}
   }
 
-  /// 拉取当前内容（编辑不中断——结束时保存，防止最后输入丢失）
   Future<String?> _grabContent() async {
     try {
       final r = await _web?.runJavaScriptReturningResult(
@@ -260,7 +217,6 @@ class _EditorScreenState extends State<EditorScreen> {
       if (r == null) return null;
       if (r is String) {
         if (r == 'null') return null;
-        // Android 端结果为 JSON 序列化字符串（引号包裹 + 转义）
         try {
           final decoded = jsonDecode(r);
           if (decoded is String) return decoded;
@@ -273,17 +229,86 @@ class _EditorScreenState extends State<EditorScreen> {
     return null;
   }
 
-  Future<void> _saveNow() async {
+  // ---------- 保存（核心——直接写文件） ----------
+
+  Future<void> _save() async {
+    if (_saving) return;
+    setState(() => _saving = true);
     final c = await _grabContent();
-    if (c != null) {
-      await _saveDraft(c);
-      _setDirty(false);
+    if (c == null) {
+      setState(() => _saving = false);
+      return;
     }
+    try {
+      final f = _srcFile;
+      if (f == null) throw Exception('项目未就绪');
+      await f.writeAsString(c, flush: true);
+      // 源文件已同步 → 清除草稿
+      try {
+        final df = await _draftFile();
+        if (df != null && await df.exists()) await df.delete();
+      } catch (_) {}
+      _setDirty(false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('已保存：$_rel'),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('保存失败：$e')));
+      }
+    }
+    if (mounted) setState(() => _saving = false);
   }
+
+  // ---------- 退出（未保存询问） ----------
 
   Future<void> _handleBack() async {
     if (_leaving) return;
-    await _saveNow();
+    if (_dirty) {
+      final choice = await showDialog<String>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('有未保存的修改', style: TextStyle(fontSize: 16)),
+          content: const Text(
+            '选择「保存并退出」将直接写回源文件；\n选择「仅退出」将保留草稿（下次打开可恢复）。',
+            style: TextStyle(fontSize: 13.5, height: 1.6),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, 'cancel'),
+              child: const Text('取消'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, 'draft'),
+              child: const Text('仅退出'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, 'save'),
+              child: const Text('保存并退出'),
+            ),
+          ],
+        ),
+      );
+      if (choice == 'cancel' || choice == null) return;
+      if (choice == 'save') {
+        await _save();
+      } else {
+        // 仅退出：确保草稿已写入（最后时刻的内容）
+        final c = await _grabContent();
+        if (c != null) {
+          try {
+            final df = await _draftFile();
+            await df?.writeAsString(c, flush: true);
+          } catch (_) {}
+        }
+      }
+    }
     if (!mounted) return;
     setState(() => _leaving = true);
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -332,7 +357,7 @@ class _EditorScreenState extends State<EditorScreen> {
               leading: Icon(Icons.restart_alt_rounded, color: p.red),
               title: Text('恢复原版内容', style: TextStyle(color: p.red)),
               subtitle: Text(
-                '丢弃本文件草稿，回到内置源码',
+                '丢弃本文件未保存修改，回到源文件当前内容',
                 style: TextStyle(fontSize: 12, color: p.t3),
               ),
               onTap: () => Navigator.pop(ctx, 'revert'),
@@ -397,9 +422,9 @@ class _EditorScreenState extends State<EditorScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: p.elev,
-        title: Text('恢复原版内容？', style: TextStyle(fontSize: 16, color: p.t1)),
+        title: Text('恢复为源文件内容？', style: TextStyle(fontSize: 16, color: p.t1)),
         content: Text(
-          '将丢弃本文件的所有未保存修改（草稿），恢复为内置源码内容。',
+          '将丢弃当前未保存的所有修改，恢复为源文件当前版本（已保存的内容不受影响）。',
           style: TextStyle(fontSize: 13.5, color: p.t2, height: 1.6),
         ),
         actions: [
@@ -417,21 +442,18 @@ class _EditorScreenState extends State<EditorScreen> {
     if (ok != true) return;
     try {
       final df = await _draftFile();
-      if (await df.exists()) await df.delete();
-      final content = await _srcFile.readAsString();
+      if (df != null && await df.exists()) await df.delete();
+      final content = await _srcFile?.readAsString() ?? '';
       final dark = Theme.of(context).brightness == Brightness.dark;
       await _web?.runJavaScript(
         'window.pcv.openFile('
         '${jsonEncode(_rel)}, ${jsonEncode(content)}, '
         '{"dark": $dark, "fontPx": ${widget.settings.codeFontSize}});',
       );
+      _setDirty(false);
       if (mounted) {
-        setState(() {
-          _dirty = false;
-          _hasDraft = false;
-        });
         ScaffoldMessenger.of(context)
-            .showSnackBar(const SnackBar(content: Text('已恢复为内置原版内容')));
+            .showSnackBar(const SnackBar(content: Text('已恢复为源文件内容')));
       }
     } catch (_) {}
   }
@@ -441,6 +463,7 @@ class _EditorScreenState extends State<EditorScreen> {
   @override
   Widget build(BuildContext context) {
     final p = palOf(context);
+    final accent = Theme.of(context).colorScheme.primary;
     return PopScope(
       canPop: _leaving,
       onPopInvokedWithResult: (didPop, _) {
@@ -476,19 +499,35 @@ class _EditorScreenState extends State<EditorScreen> {
                     ),
                   ),
                 ),
-              if (_hasDraft)
-                Padding(
-                  padding: const EdgeInsets.only(left: 8),
-                  child: Pill(
-                    text: '草稿',
-                    fg: p.cyan,
-                    bg: tintOf(p.cyan, p.dark),
-                    fontSize: 10,
-                  ),
-                ),
             ],
           ),
           actions: [
+            // 保存按钮（核心——有修改时高亮可点）
+            TextButton.icon(
+              onPressed: (_dirty && !_saving) ? _save : null,
+              icon: _saving
+                  ? SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: accent,
+                      ),
+                    )
+                  : Icon(
+                      Icons.save_rounded,
+                      size: 18,
+                      color: _dirty ? accent : p.t4,
+                    ),
+              label: Text(
+                '保存',
+                style: TextStyle(
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w600,
+                  color: _dirty ? accent : p.t4,
+                ),
+              ),
+            ),
             IconButton(
               tooltip: '操作',
               onPressed: _showMenu,
@@ -528,8 +567,8 @@ class _EditorScreenState extends State<EditorScreen> {
         ),
       );
     }
-    return FutureBuilder<WebViewController>(
-      future: _ensureController(),
+    return FutureBuilder<String>(
+      future: _editorHtml(),
       builder: (context, snap) {
         if (!snap.hasData) {
           return Center(
@@ -539,9 +578,29 @@ class _EditorScreenState extends State<EditorScreen> {
             ),
           );
         }
-        return WebViewWidget(controller: snap.data!);
+        return WebViewWidget(controller: _makeController(snap.data!));
       },
     );
+  }
+
+  WebViewController? _controller;
+  WebViewController _makeController(String html) {
+    if (_controller != null) return _controller!;
+    final c = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..setBackgroundColor(const Color(0xFF1F2335))
+      ..addJavaScriptChannel(
+        'PcvBridge',
+        onMessageReceived: (JavaScriptMessage message) {
+          try {
+            final j = jsonDecode(message.message) as Map<String, dynamic>;
+            _onJsEvent(j['type']?.toString() ?? '', j['payload']);
+          } catch (_) {}
+        },
+      )
+      ..loadHtmlString(html, baseUrl: 'https://pcv.local/');
+    _web = c;
+    return c;
   }
 
   Widget _statusBar(BuildContext context) {
@@ -563,14 +622,14 @@ class _EditorScreenState extends State<EditorScreen> {
               const Spacer(),
               Icon(
                 _dirty
-                    ? Icons.cloud_upload_outlined
-                    : Icons.cloud_done_outlined,
+                    ? Icons.edit_note_rounded
+                    : Icons.check_circle_outline_rounded,
                 size: 14,
                 color: _dirty ? p.yellow : p.green,
               ),
               const SizedBox(width: 5),
               Text(
-                _dirty ? '草稿保存中…' : '草稿已保存',
+                _dirty ? '未保存' : '已保存',
                 style: TextStyle(fontSize: 11, color: p.t3),
               ),
             ],

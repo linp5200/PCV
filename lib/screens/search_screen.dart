@@ -17,7 +17,7 @@ class SearchScreen extends StatefulWidget {
 }
 
 class SearchScreenState extends State<SearchScreen> {
-  final ws = WorkspaceService.instance;
+  final ps = ProjectsService.instance;
   final _controller = TextEditingController();
   Timer? _debounce;
 
@@ -46,10 +46,11 @@ class SearchScreenState extends State<SearchScreen> {
       });
       return;
     }
-    if (ws.src == null || ws.phase != WPhase.ready) return;
+    final dir = ps.currentDir;
+    if (dir == null) return;
     setState(() => _searching = true);
     final out = await searchWorkspace(
-      ws.src!,
+      dir,
       q,
       nameOnly: _mode == 'name',
       contentOnly: _mode == 'content',

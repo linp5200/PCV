@@ -1,7 +1,8 @@
 // PCV · 便携代码图形化工作台（Portable Code Visual Workbench）
-// 入口：加载设置 → 构建主题 → 启动外壳（四屏：首页/文件/搜索/设置）
+// 入口：加载设置 → 项目服务 → 构建主题 → 启动外壳（五屏：首页/文件/搜索/AI/设置）
 import 'package:flutter/material.dart';
 
+import 'screens/ai_screen.dart';
 import 'screens/files_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/search_screen.dart';
@@ -62,8 +63,8 @@ class _ShellState extends State<Shell> {
   @override
   void initState() {
     super.initState();
-    // 启动时确保内置源码就绪（首次：解压；之后：直接读 meta）
-    WorkspaceService.instance.ensure();
+    // 启动时确保项目就绪（首次：解压内置；之后：直接读 meta）
+    ProjectsService.instance.init();
   }
 
   void _go(int i) => setState(() => _index = i);
@@ -75,9 +76,11 @@ class _ShellState extends State<Shell> {
         settings: widget.settings,
         onOpenFiles: () => _go(1),
         onOpenSearch: () => _go(2),
+        onOpenAi: () => _go(3),
       ),
       FilesScreen(key: _filesKey, settings: widget.settings),
       SearchScreen(key: _searchKey, settings: widget.settings),
+      AiScreen(settings: widget.settings, onOpenSettings: () => _go(4)),
       SettingsScreen(settings: widget.settings),
     ];
     return Scaffold(

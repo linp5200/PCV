@@ -244,6 +244,7 @@ class PcvNavBar extends StatelessWidget {
       (Icons.home_outlined, Icons.home_rounded, '首页'),
       (Icons.folder_outlined, Icons.folder_rounded, '文件'),
       (Icons.search_outlined, Icons.search_rounded, '搜索'),
+      (Icons.auto_awesome_outlined, Icons.auto_awesome_rounded, 'AI'),
       (Icons.settings_outlined, Icons.settings_rounded, '设置'),
     ];
     return Container(

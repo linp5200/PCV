@@ -17,6 +17,9 @@ import {
 } from '@codemirror/language';
 import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
 import { tags } from '@lezer/highlight';
+import { linter, lintGutter } from '@codemirror/lint';
+import { indentMore, indentLess } from '@codemirror/commands';
+import { syntaxTree } from '@codemirror/language';
 import { cpp } from '@codemirror/lang-cpp';
 import { python } from '@codemirror/lang-python';
 import { javascript } from '@codemirror/lang-javascript';
@@ -196,7 +199,147 @@ const updateListener = EditorView.updateListener.of((u) => {
   if (u.selectionSet || u.docChanged) scheduleCursor();
 });
 
-// ============ 基础扩展（全部来自 CM6 成熟生态） ============
+// ============ 语法检查（@codemirror/lint 官方生态——基于 lezer 解析树） ============
+// 检查项：①解析错误（lezer error 节点——覆盖全部已支持语言）
+//         ②JSON 完整性（JSON.parse）③括号/引号配对由 bracketMatching 实时提供
+function lintDoc(view) {
+  const diagnostics = [];
+  const doc = view.state.doc;
+  // 超大文件保护：>200KB 跳过解析扫描（手机性能优先）
+  if (doc.length > 200000) return diagnostics;
+  // ① 解析错误（lezer 语法树中的 error 节点）
+  syntaxTree(view.state).cursor().iterate((node) => {
+    if (node.type.isError && node.to > node.from) {
+      diagnostics.push({
+        from: node.from,
+        to: Math.min(node.to, node.from + 200),
+        severity: 'error',
+        message: '语法错误（解析器报告）',
+      });
+    } else if (node.type.isError) {
+      diagnostics.push({
+        from: node.from,
+        to: Math.min(doc.length, node.from + 1),
+        severity: 'error',
+        message: '语法错误（解析器报告）',
+      });
+    }
+  });
+  // ② JSON 完整性检查
+  const path = currentPath || '';
+  if (/\.json$/i.test(path) && doc.length < 400000) {
+    try {
+      JSON.parse(doc.toString());
+    } catch (e) {
+      const msg = String((e && e.message) || 'JSON 格式错误');
+      let pos = 0;
+      const m = /position (\d+)/.exec(msg);
+      if (m) pos = Math.min(+m[1], doc.length);
+      diagnostics.push({
+        from: Math.max(0, pos - 1),
+        to: Math.min(doc.length, pos + 1),
+        severity: 'error',
+        message: 'JSON：' + msg,
+      });
+    }
+  }
+  // 去重（同一位置只留一条）
+  const seen = new Set();
+  return diagnostics.filter((d) => {
+    const k = d.from + ':' + d.to + ':' + d.message;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  }).slice(0, 60);
+}
+
+// ============ 双拇指手势（手机端便利——先生要求） ============
+// ① 双指捏合：调整字号（10–24px）
+// ② 双指水平横滑：缩进 / 反缩进（选中行或当前行）
+function touchDist(t) {
+  const dx = t[0].clientX - t[1].clientX;
+  const dy = t[0].clientY - t[1].clientY;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+function touchAvg(t) {
+  return [(t[0].clientX + t[1].clientX) / 2, (t[0].clientY + t[1].clientY) / 2];
+}
+
+let pinch = null;
+function installGestures(dom) {
+  dom.addEventListener('touchstart', (e) => {
+    if (e.touches.length === 2) {
+      pinch = {
+        d0: touchDist(e.touches),
+        font0: currentFont,
+        x0: touchAvg(e.touches)[0],
+        y0: touchAvg(e.touches)[1],
+        mode: null, // 'zoom' | 'indent'
+      };
+    } else {
+      pinch = null;
+    }
+  }, { passive: true });
+
+  dom.addEventListener('touchmove', (e) => {
+    if (!pinch || e.touches.length !== 2) return;
+    e.preventDefault(); // 双指期间独占手势
+    const d = touchDist(e.touches);
+    const [ax, ay] = touchAvg(e.touches);
+    const dxTotal = ax - pinch.x0;
+    const dyTotal = ay - pinch.y0;
+    // 判定主意图（只判一次）
+    if (!pinch.mode) {
+      const zoomDelta = Math.abs(d - pinch.d0);
+      const horizDelta = Math.abs(dxTotal);
+      if (zoomDelta > 14) {
+        pinch.mode = 'zoom';
+      } else if (horizDelta > 46 && Math.abs(dyTotal) < 36) {
+        pinch.mode = 'indent';
+        applyIndentGesture(dxTotal > 0);
+        pinch.x0 = ax; // 重置基线（允许连续档位触发）
+      } else {
+        return;
+      }
+    }
+    if (pinch.mode === 'zoom') {
+      const ratio = d / pinch.d0;
+      const nf = Math.max(10, Math.min(24, Math.round(pinch.font0 * ratio)));
+      if (nf !== currentFont) {
+        applyFontSize(nf);
+        call('fontChanged', { fontPx: nf });
+      }
+    } else if (pinch.mode === 'indent') {
+      const step = ax - pinch.x0;
+      if (Math.abs(step) > 56) {
+        applyIndentGesture(step > 0);
+        pinch.x0 = ax;
+      }
+    }
+  }, { passive: false });
+
+  dom.addEventListener('touchend', (e) => {
+    if (e.touches.length < 2) pinch = null;
+  }, { passive: true });
+}
+
+function applyIndentGesture(forward) {
+  if (!view) return;
+  view.focus();
+  if (forward) {
+    indentMore(view);
+  } else {
+    indentLess(view);
+  }
+  call('indentDone', { dir: forward ? 'more' : 'less' });
+}
+
+function applyFontSize(px) {
+  currentFont = px;
+  if (view) {
+    view.dispatch({ effects: themeComp.reconfigure(themeBundle(currentDark, currentFont)) });
+  }
+}
 function baseExtensions() {
   return [
     lineNumbers(),
@@ -212,6 +355,8 @@ function baseExtensions() {
     closeBrackets(),
     highlightActiveLine(),
     highlightSelectionMatches(),
+    lintGutter(),
+    linter(lintDoc, { delay: 500 }),
     EditorView.lineWrapping, // 手机窄屏——自动换行
     keymap.of([
       ...closeBracketsKeymap,
@@ -258,8 +403,7 @@ window.pcv = {
     document.body.style.background = (currentDark ? DARK_UI : LIGHT_UI).bg;
   },
   setFontSize(px) {
-    currentFont = Math.max(10, Math.min(24, +px || 14));
-    view.dispatch({ effects: themeComp.reconfigure(themeBundle(currentDark, currentFont)) });
+    applyFontSize(Math.max(10, Math.min(24, +px || 14)));
   },
   setReadOnly(b) {
     view.dispatch({ effects: roComp.reconfigure(EditorState.readOnly.of(!!b)) });
@@ -295,5 +439,6 @@ view = new EditorView({
   state: makeState('// PCV · 从 Flutter 侧打开文件\n', ''),
   parent: document.getElementById('ed'),
 });
+installGestures(view.dom);
 document.body.style.background = DARK_UI.bg;
 call('ready', {});

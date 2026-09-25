@@ -1,4 +1,4 @@
-// PCV · 设置屏（外观 / 内置源码包 / 关于）
+// PCV · 设置屏（外观 / AI 助手 / 项目 / 关于）
 import 'package:flutter/material.dart';
 
 import '../services.dart';
@@ -14,21 +14,21 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  final ws = WorkspaceService.instance;
+  final ps = ProjectsService.instance;
 
   @override
   void initState() {
     super.initState();
-    ws.addListener(_onWs);
+    ps.addListener(_onPs);
   }
 
   @override
   void dispose() {
-    ws.removeListener(_onWs);
+    ps.removeListener(_onPs);
     super.dispose();
   }
 
-  void _onWs() {
+  void _onPs() {
     if (mounted) setState(() {});
   }
 
@@ -124,7 +124,50 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ],
             ),
           ),
-          const SectionLabel('内置源码包'),
+          const SectionLabel('AI 助手'),
+          PcvCard(
+            padding: EdgeInsets.zero,
+            margin: const EdgeInsets.symmetric(horizontal: 16),
+            child: Column(
+              children: [
+                SettingRow(
+                  icon: Icons.menu_book_outlined,
+                  iconColor: p.blue,
+                  iconBg: tintOf(p.blue, p.dark),
+                  title: '帮助模式（只读）',
+                  subtitle: widget.settings.helpConfigured
+                      ? '${widget.settings.helpModel} @ ${_short(widget.settings.helpEndpoint)}'
+                      : '未配置——点击填写（可用免费轻量模型）',
+                  onTap: () => _aiDialog(mode: 'help'),
+                ),
+                const RowDivider(),
+                SettingRow(
+                  icon: Icons.edit_note_outlined,
+                  iconColor: p.purple,
+                  iconBg: tintOf(p.purple, p.dark),
+                  title: '编写模式（读改+部署）',
+                  subtitle: widget.settings.writeConfigured
+                      ? '${widget.settings.writeModel} @ ${_short(widget.settings.writeEndpoint)}'
+                      : '未配置——点击填写（建议能力较强的模型）',
+                  onTap: () => _aiDialog(mode: 'write'),
+                ),
+                const RowDivider(),
+                SettingRow(
+                  icon: Icons.attachment_outlined,
+                  iconColor: p.teal,
+                  iconBg: tintOf(p.teal, p.dark),
+                  title: '自动附带上下文',
+                  subtitle: '提问时自动带上最近打开的文件内容',
+                  trailing: Switch(
+                    value: widget.settings.aiAutoContext,
+                    onChanged: (v) =>
+                        widget.settings.setAiConfig(aiAutoContext: v),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SectionLabel('项目'),
           PcvCard(
             padding: EdgeInsets.zero,
             margin: const EdgeInsets.symmetric(horizontal: 16),
@@ -132,40 +175,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
               children: [
                 SettingRow(
                   icon: Icons.inventory_2_outlined,
-                  iconColor: p.blue,
-                  iconBg: tintOf(p.blue, p.dark),
-                  title: 'LINGOS 源码',
-                  subtitle: ws.phase == WPhase.ready
-                      ? 'v${ws.meta['version'] ?? ''} · ${ws.meta['file_count'] ?? 0} 个文件'
-                      : ws.phase == WPhase.error
-                      ? '初始化失败'
+                  iconColor: p.green,
+                  iconBg: tintOf(p.green, p.dark),
+                  title: 'LINGOS 内置源码',
+                  subtitle: ps.loaded
+                      ? 'v${ps.projects.isNotEmpty && ps.projects.first.builtin ? ps.projects.first.version : ''} · '
+                            '${ps.projects.isNotEmpty && ps.projects.first.builtin ? ps.projects.first.fileCount : 0} 个文件'
                       : '正在准备…',
-                ),
-                const RowDivider(),
-                SettingRow(
-                  icon: Icons.schedule_rounded,
-                  iconColor: p.teal,
-                  iconBg: tintOf(p.teal, p.dark),
-                  title: '打包时间',
-                  subtitle: '${ws.meta['built_at'] ?? '—'}',
-                ),
-                const RowDivider(),
-                SettingRow(
-                  icon: Icons.commit_rounded,
-                  iconColor: p.purple,
-                  iconBg: tintOf(p.purple, p.dark),
-                  title: '提交',
-                  subtitle: (ws.meta['commit'] as String? ?? '').isNotEmpty
-                      ? (ws.meta['commit'] as String).substring(0, 7)
-                      : '—',
                 ),
                 const RowDivider(),
                 SettingRow(
                   icon: Icons.restart_alt_rounded,
                   iconColor: p.red,
                   iconBg: tintOf(p.red, p.dark),
-                  title: '恢复原版源码',
-                  subtitle: '重新解压内置包（编辑内容与草稿保留）',
+                  title: '恢复内置源码',
+                  subtitle: '重新解压内置包（自建项目不受影响）',
                   titleColor: p.red,
                   onTap: _confirmRestore,
                 ),
@@ -183,7 +207,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   iconColor: p.t2,
                   iconBg: p.dark ? p.hover : p.root,
                   title: '版本',
-                  subtitle: 'PCV 0.1.0 (1) · A1 骨架 + 内置源码 + 编辑器',
+                  subtitle: 'PCV 0.2.0 (2) · 多项目 + 文件管理 + AI 助手 + 语法检查',
                 ),
                 const RowDivider(),
                 SettingRow(
@@ -208,6 +232,156 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
     );
   }
+
+  String _short(String s) =>
+      s.length > 34 ? '…${s.substring(s.length - 34)}' : s;
+
+  // ---------- AI 配置 ----------
+
+  Future<void> _aiDialog({required String mode}) async {
+    final p = palOf(context);
+    final isHelp = mode == 'help';
+    final endpointCtrl = TextEditingController(
+      text: isHelp
+          ? widget.settings.helpEndpoint
+          : widget.settings.writeEndpoint,
+    );
+    final keyCtrl = TextEditingController(
+      text: isHelp ? widget.settings.helpApiKey : widget.settings.writeApiKey,
+    );
+    final modelCtrl = TextEditingController(
+      text: isHelp ? widget.settings.helpModel : widget.settings.writeModel,
+    );
+    var obscure = true;
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setD) => AlertDialog(
+          backgroundColor: p.elev,
+          title: Row(
+            children: [
+              Icon(
+                isHelp ? Icons.menu_book_outlined : Icons.edit_note_outlined,
+                size: 20,
+                color: isHelp ? p.blue : p.purple,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                isHelp ? '配置帮助模式' : '配置编写模式',
+                style: TextStyle(fontSize: 16, color: p.t1),
+              ),
+            ],
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  isHelp
+                      ? '只读助手——解释与总结代码。可用免费的 OpenAI 兼容服务。'
+                      : '编写助手——读取并建议修改代码（后续接入部署）。建议用较强模型。',
+                  style: TextStyle(fontSize: 12.5, color: p.t3, height: 1.5),
+                ),
+                const SizedBox(height: 14),
+                _dialogField(
+                  ctx,
+                  '接口地址（OpenAI 兼容）',
+                  endpointCtrl,
+                  'https://api.example.com/v1',
+                ),
+                const SizedBox(height: 10),
+                _dialogField(
+                  ctx,
+                  'API Key',
+                  keyCtrl,
+                  'sk-…',
+                  obscure: obscure,
+                  suffix: IconButton(
+                    icon: Icon(
+                      obscure
+                          ? Icons.visibility_outlined
+                          : Icons.visibility_off_outlined,
+                      size: 18,
+                      color: p.t3,
+                    ),
+                    onPressed: () => setD(() => obscure = !obscure),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                _dialogField(
+                  ctx,
+                  '模型名',
+                  modelCtrl,
+                  'gpt-4o-mini / deepseek-chat / …',
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () {
+                widget.settings.setAiConfig(
+                  helpEndpoint: isHelp ? endpointCtrl.text : null,
+                  helpApiKey: isHelp ? keyCtrl.text : null,
+                  helpModel: isHelp ? modelCtrl.text : null,
+                  writeEndpoint: !isHelp ? endpointCtrl.text : null,
+                  writeApiKey: !isHelp ? keyCtrl.text : null,
+                  writeModel: !isHelp ? modelCtrl.text : null,
+                );
+                Navigator.pop(ctx);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('${isHelp ? '帮助' : '编写'}模式配置已保存')),
+                );
+              },
+              child: const Text('保存'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _dialogField(
+    BuildContext ctx,
+    String label,
+    TextEditingController ctrl,
+    String hint, {
+    bool obscure = false,
+    Widget? suffix,
+  }) {
+    final p = palOf(ctx);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: TextStyle(fontSize: 12, color: p.t3)),
+        const SizedBox(height: 4),
+        TextField(
+          controller: ctrl,
+          obscureText: obscure,
+          style: TextStyle(fontSize: 13, color: p.t1),
+          decoration: InputDecoration(
+            hintText: hint,
+            hintStyle: TextStyle(fontSize: 12.5, color: p.t4),
+            suffixIcon: suffix,
+            isDense: true,
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 12,
+              vertical: 11,
+            ),
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ---------- 其它 ----------
 
   Widget _themeChip(String label, String value) {
     final p = palOf(context);
@@ -286,10 +460,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: p.elev,
-        title: Text('恢复原版源码？', style: TextStyle(fontSize: 16, color: p.t1)),
+        title: Text('恢复内置源码？', style: TextStyle(fontSize: 16, color: p.t1)),
         content: Text(
-          '将重新解压内置源码包，覆盖工作区中的源码文件。\n'
-          '你的未部署修改若只存在于工作区将被覆盖——草稿区不受影响。',
+          '将重新解压内置 LINGOS 源码，覆盖内置项目中的修改。\n自建项目完全不受影响。',
           style: TextStyle(fontSize: 13.5, color: p.t2, height: 1.6),
         ),
         actions: [
@@ -305,10 +478,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
     );
     if (ok == true) {
-      await ws.ensure(force: true);
+      await ps.restoreBuiltin();
       if (!mounted) return;
       ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('源码已恢复为内置原版')));
+          .showSnackBar(const SnackBar(content: Text('内置源码已恢复')));
     }
   }
 }
