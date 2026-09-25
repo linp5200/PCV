@@ -37,12 +37,14 @@ class SettingsModel extends ChangeNotifier {
   Future<void> save() async {
     try {
       final f = File('${_base!.path}/settings.json');
-      await f.writeAsString(jsonEncode({
-        'themeMode': themeMode,
-        'accent': accent,
-        'codeFontSize': codeFontSize,
-        'recent': recent,
-      }));
+      await f.writeAsString(
+        jsonEncode({
+          'themeMode': themeMode,
+          'accent': accent,
+          'codeFontSize': codeFontSize,
+          'recent': recent,
+        }),
+      );
     } catch (_) {}
   }
 
@@ -102,7 +104,8 @@ class WorkspaceService extends ChangeNotifier {
 
       if (!force && await metaFile.exists() && await src!.exists()) {
         try {
-          meta = jsonDecode(await metaFile.readAsString()) as Map<String, dynamic>;
+          meta =
+              jsonDecode(await metaFile.readAsString()) as Map<String, dynamic>;
           phase = WPhase.ready;
           notifyListeners();
           return;
@@ -126,9 +129,12 @@ class WorkspaceService extends ChangeNotifier {
       if (magic != 'PCVPAK1\n') {
         throw Exception('内置源码包格式不正确（magic 校验失败）');
       }
-      final indexLen = int.parse(String.fromCharCodes(raw.sublist(8, 19)).trim());
-      final indexJson =
-          jsonDecode(utf8.decode(raw.sublist(19, 19 + indexLen))) as Map<String, dynamic>;
+      final indexLen = int.parse(
+        String.fromCharCodes(raw.sublist(8, 19)).trim(),
+      );
+      final indexJson = jsonDecode(
+        utf8.decode(raw.sublist(19, 19 + indexLen)),
+      ) as Map<String, dynamic>;
       final dataStart = 19 + indexLen;
       final files = (indexJson['files'] as List).cast<Map<String, dynamic>>();
 
@@ -139,8 +145,10 @@ class WorkspaceService extends ChangeNotifier {
         final l = ent['l'] as int;
         final f = File('${src!.path}/$rel');
         await f.create(recursive: true);
-        await f.writeAsBytes(raw.sublist(dataStart + o, dataStart + o + l),
-            flush: false);
+        await f.writeAsBytes(
+          raw.sublist(dataStart + o, dataStart + o + l),
+          flush: false,
+        );
         i++;
         if (i % 25 == 0 || i == files.length) {
           progress = i / files.length;
@@ -190,9 +198,31 @@ class SearchOutcome {
 }
 
 const _skipExts = {
-  '.png', '.jpg', '.jpeg', '.gif', '.ico', '.webp', '.so', '.a', '.o',
-  '.bin', '.gz', '.zip', '.jks', '.ttf', '.woff', '.woff2', '.pak', '.mp3',
-  '.mp4', '.wav', '.jar', '.exe', '.dll', '.class', '.pyc',
+  '.png',
+  '.jpg',
+  '.jpeg',
+  '.gif',
+  '.ico',
+  '.webp',
+  '.so',
+  '.a',
+  '.o',
+  '.bin',
+  '.gz',
+  '.zip',
+  '.jks',
+  '.ttf',
+  '.woff',
+  '.woff2',
+  '.pak',
+  '.mp3',
+  '.mp4',
+  '.wav',
+  '.jar',
+  '.exe',
+  '.dll',
+  '.class',
+  '.pyc',
 };
 
 bool _looksBinary(List<int> bytes) {

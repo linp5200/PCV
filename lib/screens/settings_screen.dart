@@ -53,9 +53,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     children: [
                       Icon(Icons.contrast_rounded, size: 18, color: p.t2),
                       const SizedBox(width: 10),
-                      Text('主题',
-                          style:
-                              TextStyle(fontSize: 14, color: p.t1)),
+                      Text('主题', style: TextStyle(fontSize: 14, color: p.t1)),
                     ],
                   ),
                 ),
@@ -76,12 +74,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
                   child: Row(
                     children: [
-                      Icon(Icons.palette_outlined,
-                          size: 18, color: p.t2),
+                      Icon(Icons.palette_outlined, size: 18, color: p.t2),
                       const SizedBox(width: 10),
-                      Text('强调色',
-                          style:
-                              TextStyle(fontSize: 14, color: p.t1)),
+                      Text('强调色', style: TextStyle(fontSize: 14, color: p.t1)),
                     ],
                   ),
                 ),
@@ -101,12 +96,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
                   child: Row(
                     children: [
-                      Icon(Icons.format_size_rounded,
-                          size: 18, color: p.t2),
+                      Icon(Icons.format_size_rounded, size: 18, color: p.t2),
                       const SizedBox(width: 10),
-                      Text('代码字号',
-                          style:
-                              TextStyle(fontSize: 14, color: p.t1)),
+                      Text('代码字号', style: TextStyle(fontSize: 14, color: p.t1)),
                       const Spacer(),
                       Text(
                         '${widget.settings.codeFontSize.toStringAsFixed(0)} px',
@@ -126,8 +118,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     min: 11,
                     max: 20,
                     divisions: 9,
-                    onChanged: (v) =>
-                        widget.settings.setCodeFontSize(v),
+                    onChanged: (v) => widget.settings.setCodeFontSize(v),
                   ),
                 ),
               ],
@@ -147,8 +138,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   subtitle: ws.phase == WPhase.ready
                       ? 'v${ws.meta['version'] ?? ''} · ${ws.meta['file_count'] ?? 0} 个文件'
                       : ws.phase == WPhase.error
-                          ? '初始化失败'
-                          : '正在准备…',
+                      ? '初始化失败'
+                      : '正在准备…',
                 ),
                 const RowDivider(),
                 SettingRow(
@@ -164,8 +155,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   iconColor: p.purple,
                   iconBg: tintOf(p.purple, p.dark),
                   title: '提交',
-                  subtitle: (ws.meta['commit'] as String? ?? '')
-                          .isNotEmpty
+                  subtitle: (ws.meta['commit'] as String? ?? '').isNotEmpty
                       ? (ws.meta['commit'] as String).substring(0, 7)
                       : '—',
                 ),
@@ -269,11 +259,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
             ),
             child: sel
-                ? Icon(Icons.check_rounded,
+                ? Icon(
+                    Icons.check_rounded,
                     size: 16,
-                    color: p.dark
-                        ? const Color(0xFF151A2E)
-                        : Colors.white)
+                    color: p.dark ? const Color(0xFF151A2E) : Colors.white,
+                  )
                 : null,
           ),
           const SizedBox(height: 4),
@@ -296,8 +286,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: p.elev,
-        title: Text('恢复原版源码？',
-            style: TextStyle(fontSize: 16, color: p.t1)),
+        title: Text('恢复原版源码？', style: TextStyle(fontSize: 16, color: p.t1)),
         content: Text(
           '将重新解压内置源码包，覆盖工作区中的源码文件。\n'
           '你的未部署修改若只存在于工作区将被覆盖——草稿区不受影响。',
@@ -318,9 +307,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (ok == true) {
       await ws.ensure(force: true);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('源码已恢复为内置原版')),
-      );
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('源码已恢复为内置原版')));
     }
   }
 }

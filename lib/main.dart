@@ -30,8 +30,8 @@ class PcvApp extends StatelessWidget {
         final themeMode = mode == 'dark'
             ? ThemeMode.dark
             : mode == 'light'
-                ? ThemeMode.light
-                : ThemeMode.system;
+            ? ThemeMode.light
+            : ThemeMode.system;
         final accent = accentOf(settings.accent);
         return MaterialApp(
           title: '代码工作台',

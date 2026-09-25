@@ -1,11 +1,14 @@
 // PCV · 编辑器屏（WebView + CodeMirror 6 成熟内核）
 // 高亮/折叠/搜索/括号匹配 = CodeMirror 6；本页只做桥接与草稿
+// WebView 宿主 = 官方 webview_flutter 插件（Flutter 团队维护）
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
-import 'package:flutter_inappwebview/flutter_inappwebview.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:webview_flutter/webview_flutter.dart';
 
 import 'services.dart';
 import 'theme.dart';
@@ -30,11 +33,8 @@ class EditorScreen extends StatefulWidget {
   }) async {
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => EditorScreen(
-          settings: settings,
-          rel: rel,
-          jumpToLine: jumpToLine,
-        ),
+        builder: (_) =>
+            EditorScreen(settings: settings, rel: rel, jumpToLine: jumpToLine),
       ),
     );
   }
@@ -45,8 +45,9 @@ class EditorScreen extends StatefulWidget {
 
 class _EditorScreenState extends State<EditorScreen> {
   static String? _htmlCache;
+  static File? _htmlFileCache;
 
-  InAppWebViewController? _web;
+  WebViewController? _web;
   bool _pageReady = false;
   bool _readySent = false;
   bool _leaving = false;
@@ -59,13 +60,14 @@ class _EditorScreenState extends State<EditorScreen> {
   int _col = 1;
 
   String? _loadError;
+  String? _pendingContent;
+  Timer? _draftTimer;
 
   // ---------- 路径 ----------
 
   String get _rel => widget.rel;
 
-  File get _srcFile =>
-      File('${WorkspaceService.instance.src!.path}/$_rel');
+  File get _srcFile => File('${WorkspaceService.instance.src!.path}/$_rel');
 
   Future<File> _draftFile() async {
     final root = WorkspaceService.instance.root!.parent.path;
@@ -81,6 +83,12 @@ class _EditorScreenState extends State<EditorScreen> {
   void initState() {
     super.initState();
     _load();
+  }
+
+  @override
+  void dispose() {
+    _draftTimer?.cancel();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -101,14 +109,66 @@ class _EditorScreenState extends State<EditorScreen> {
     } catch (e) {
       _loadError = '$e';
     }
+    if (mounted) setState(() {});
+    // 两种时序都覆盖：①内容先到、页面后到（ready 事件触发）②页面先就绪、内容后到（此处触发）
+    _bootWebView();
   }
-
-  String? _pendingContent;
 
   Future<String> _editorHtml() async {
     if (_htmlCache != null) return _htmlCache!;
     _htmlCache = await rootBundle.loadString('assets/webview/editor.html');
     return _htmlCache!;
+  }
+
+  /// 把内核 HTML 落到本地文件（跨屏复用——loadFile 比 loadHtmlString 更省通道）
+  Future<File> _htmlFile() async {
+    final cached = _htmlFileCache;
+    if (cached != null && await cached.exists()) return cached;
+    final html = await _editorHtml();
+    final docs = await getApplicationDocumentsDirectory();
+    final f = File('${docs.path}/pcv/editor.html');
+    await f.create(recursive: true);
+    final expected = utf8.encode(html).length;
+    if (!await f.exists() || (await f.length()) != expected) {
+      await f.writeAsString(html, flush: true);
+    }
+    _htmlFileCache = f;
+    return f;
+  }
+
+  Future<WebViewController> _ensureController() async {
+    final existing = _web;
+    if (existing != null) return existing;
+    final c = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..setBackgroundColor(const Color(0xFF1F2335))
+      ..addJavaScriptChannel(
+        'PcvBridge',
+        onMessageReceived: (msg) {
+          try {
+            final m = jsonDecode(msg.message);
+            if (m is Map) {
+              _onJsEvent(m['type']?.toString() ?? '', m['payload']);
+            }
+          } catch (_) {}
+        },
+      )
+      ..setNavigationDelegate(
+        NavigationDelegate(
+          onNavigationRequest: (req) => NavigationDecision.prevent,
+        ),
+      );
+    _web = c;
+    try {
+      final f = await _htmlFile();
+      await c.loadFile(f.path);
+    } catch (_) {
+      try {
+        final html = await _editorHtml();
+        await c.loadHtmlString(html);
+      } catch (_) {}
+    }
+    return c;
   }
 
   Future<void> _bootWebView() async {
@@ -117,20 +177,18 @@ class _EditorScreenState extends State<EditorScreen> {
     if (content == null) return;
     _readySent = true;
     final dark = Theme.of(context).brightness == Brightness.dark;
-    final js = 'window.pcv.openFile('
+    final js =
+        'window.pcv.openFile('
         '${jsonEncode(_rel)}, ${jsonEncode(content)}, '
         '{"dark": $dark, "fontPx": ${widget.settings.codeFontSize}});';
     try {
-      await _web?.evaluateJavascript(source: js);
+      await _web?.runJavaScript(js);
       if (widget.jumpToLine != null && widget.jumpToLine! > 1) {
-        await _web?.evaluateJavascript(
-          source: 'window.pcv.goToLine(${widget.jumpToLine});',
-        );
+        await _web?.runJavaScript('window.pcv.goToLine(${widget.jumpToLine});');
       }
       if (_draftRestored && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('已恢复上次自动保存的草稿')),
-        );
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('已恢复上次自动保存的草稿')));
       }
     } catch (_) {}
   }
@@ -161,18 +219,28 @@ class _EditorScreenState extends State<EditorScreen> {
         break;
       case 'changed':
         if (payload is Map) {
-          final content = payload['content'];
-          if (content is String) {
-            _setDirty(true);
-            _saveDraft(content);
-          }
+          final lines = (payload['lines'] as num?)?.toInt();
+          if (lines != null) _lines = lines;
         }
+        _setDirty(true);
+        _scheduleDraftSave();
         break;
     }
   }
 
   void _setDirty(bool v) {
     if (_dirty != v && mounted) setState(() => _dirty = v);
+  }
+
+  void _scheduleDraftSave() {
+    _draftTimer?.cancel();
+    _draftTimer = Timer(const Duration(milliseconds: 1200), () async {
+      final c = await _grabContent();
+      if (c != null) {
+        await _saveDraft(c);
+        _setDirty(false);
+      }
+    });
   }
 
   Future<void> _saveDraft(String content) async {
@@ -183,17 +251,24 @@ class _EditorScreenState extends State<EditorScreen> {
     } catch (_) {}
   }
 
-  /// 取出当前内容（用于退出前保存——防止最后 700ms 内输入丢失）
+  /// 拉取当前内容（编辑不中断——结束时保存，防止最后输入丢失）
   Future<String?> _grabContent() async {
     try {
-      final r = await _web?.evaluateJavascript(
-        source: 'window.pcv.getContentJson()',
+      final r = await _web?.runJavaScriptReturningResult(
+        'window.pcv.getContent()',
       );
-      if (r is Map) return r['content'] as String?;
+      if (r == null) return null;
       if (r is String) {
-        final m = jsonDecode(r);
-        if (m is Map) return m['content'] as String?;
+        if (r == 'null') return null;
+        // Android 端结果为 JSON 序列化字符串（引号包裹 + 转义）
+        try {
+          final decoded = jsonDecode(r);
+          if (decoded is String) return decoded;
+          if (decoded == null) return null;
+        } catch (_) {}
+        return r;
       }
+      return r.toString();
     } catch (_) {}
     return null;
   }
@@ -242,8 +317,10 @@ class _EditorScreenState extends State<EditorScreen> {
             ListTile(
               leading: Icon(Icons.search_rounded, color: p.blue),
               title: Text('文件内搜索', style: TextStyle(color: p.t1)),
-              subtitle: Text('CodeMirror 搜索面板',
-                  style: TextStyle(fontSize: 12, color: p.t3)),
+              subtitle: Text(
+                'CodeMirror 搜索面板',
+                style: TextStyle(fontSize: 12, color: p.t3),
+              ),
               onTap: () => Navigator.pop(ctx, 'search'),
             ),
             ListTile(
@@ -253,10 +330,11 @@ class _EditorScreenState extends State<EditorScreen> {
             ),
             ListTile(
               leading: Icon(Icons.restart_alt_rounded, color: p.red),
-              title: Text('恢复原版内容',
-                  style: TextStyle(color: p.red)),
-              subtitle: Text('丢弃本文件草稿，回到内置源码',
-                  style: TextStyle(fontSize: 12, color: p.t3)),
+              title: Text('恢复原版内容', style: TextStyle(color: p.red)),
+              subtitle: Text(
+                '丢弃本文件草稿，回到内置源码',
+                style: TextStyle(fontSize: 12, color: p.t3),
+              ),
               onTap: () => Navigator.pop(ctx, 'revert'),
             ),
           ],
@@ -266,7 +344,7 @@ class _EditorScreenState extends State<EditorScreen> {
     if (!mounted || action == null) return;
     switch (action) {
       case 'search':
-        await _web?.evaluateJavascript(source: "window.pcv.search('');");
+        await _web?.runJavaScript("window.pcv.search('');");
         break;
       case 'gotoline':
         await _goToLineDialog();
@@ -294,8 +372,7 @@ class _EditorScreenState extends State<EditorScreen> {
             hintText: '1 – $_lines',
             hintStyle: TextStyle(color: p.t4),
           ),
-          onSubmitted: (v) =>
-              Navigator.pop(ctx, int.tryParse(v.trim())),
+          onSubmitted: (v) => Navigator.pop(ctx, int.tryParse(v.trim())),
         ),
         actions: [
           TextButton(
@@ -303,15 +380,14 @@ class _EditorScreenState extends State<EditorScreen> {
             child: const Text('取消'),
           ),
           TextButton(
-            onPressed: () => Navigator.pop(
-                ctx, int.tryParse(ctrl.text.trim())),
+            onPressed: () => Navigator.pop(ctx, int.tryParse(ctrl.text.trim())),
             child: const Text('跳转'),
           ),
         ],
       ),
     );
     if (n != null && n >= 1) {
-      await _web?.evaluateJavascript(source: 'window.pcv.goToLine($n);');
+      await _web?.runJavaScript('window.pcv.goToLine($n);');
     }
   }
 
@@ -321,8 +397,7 @@ class _EditorScreenState extends State<EditorScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: p.elev,
-        title: Text('恢复原版内容？',
-            style: TextStyle(fontSize: 16, color: p.t1)),
+        title: Text('恢复原版内容？', style: TextStyle(fontSize: 16, color: p.t1)),
         content: Text(
           '将丢弃本文件的所有未保存修改（草稿），恢复为内置源码内容。',
           style: TextStyle(fontSize: 13.5, color: p.t2, height: 1.6),
@@ -345,19 +420,18 @@ class _EditorScreenState extends State<EditorScreen> {
       if (await df.exists()) await df.delete();
       final content = await _srcFile.readAsString();
       final dark = Theme.of(context).brightness == Brightness.dark;
-      await _web?.evaluateJavascript(
-        source: 'window.pcv.openFile('
-            '${jsonEncode(_rel)}, ${jsonEncode(content)}, '
-            '{"dark": $dark, "fontPx": ${widget.settings.codeFontSize}});',
+      await _web?.runJavaScript(
+        'window.pcv.openFile('
+        '${jsonEncode(_rel)}, ${jsonEncode(content)}, '
+        '{"dark": $dark, "fontPx": ${widget.settings.codeFontSize}});',
       );
       if (mounted) {
         setState(() {
           _dirty = false;
           _hasDraft = false;
         });
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('已恢复为内置原版内容')),
-        );
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('已恢复为内置原版内容')));
       }
     } catch (_) {}
   }
@@ -444,16 +518,18 @@ class _EditorScreenState extends State<EditorScreen> {
             children: [
               Icon(Icons.error_outline_rounded, size: 42, color: p.red),
               const SizedBox(height: 12),
-              Text(_loadError!,
-                  style: TextStyle(color: p.t2),
-                  textAlign: TextAlign.center),
+              Text(
+                _loadError!,
+                style: TextStyle(color: p.t2),
+                textAlign: TextAlign.center,
+              ),
             ],
           ),
         ),
       );
     }
-    return FutureBuilder<String>(
-      future: _editorHtml(),
+    return FutureBuilder<WebViewController>(
+      future: _ensureController(),
       builder: (context, snap) {
         if (!snap.hasData) {
           return Center(
@@ -463,41 +539,7 @@ class _EditorScreenState extends State<EditorScreen> {
             ),
           );
         }
-        return InAppWebView(
-          initialSettings: InAppWebViewSettings(
-            javaScriptEnabled: true,
-            supportZoom: false,
-            builtInZoomControls: false,
-            displayZoomControls: false,
-            disableHorizontalScroll: true,
-            transparentBackground: false,
-            mediaPlaybackRequiresUserGesture: true,
-            useHybridComposition: true,
-            allowFileAccess: false,
-          ),
-          onWebViewCreated: (controller) {
-            _web = controller;
-            controller.addJavaScriptHandler(
-              handlerName: 'pcv',
-              callback: (args) {
-                if (args.isEmpty) return null;
-                _onJsEvent(
-                  args[0]?.toString() ?? '',
-                  args.length > 1 ? args[1] : null,
-                );
-                return null;
-              },
-            );
-            controller.loadData(
-              data: snap.data!,
-              mimeType: 'text/html',
-              encoding: 'utf-8',
-            );
-          },
-          onReceivedError: (controller, request, error) {
-            // 子资源错误忽略（单文件内联，不应发生）
-          },
-        );
+        return WebViewWidget(controller: snap.data!);
       },
     );
   }
@@ -515,18 +557,14 @@ class _EditorScreenState extends State<EditorScreen> {
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
           child: Row(
             children: [
-              Text(
-                'L$_line : C$_col',
-                style: monoStyle(size: 11, color: p.t3),
-              ),
+              Text('L$_line : C$_col', style: monoStyle(size: 11, color: p.t3)),
               const SizedBox(width: 14),
-              Text(
-                '$_lines 行',
-                style: monoStyle(size: 11, color: p.t3),
-              ),
+              Text('$_lines 行', style: monoStyle(size: 11, color: p.t3)),
               const Spacer(),
               Icon(
-                _dirty ? Icons.cloud_upload_outlined : Icons.cloud_done_outlined,
+                _dirty
+                    ? Icons.cloud_upload_outlined
+                    : Icons.cloud_done_outlined,
                 size: 14,
                 color: _dirty ? p.yellow : p.green,
               ),

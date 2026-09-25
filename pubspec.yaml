@@ -10,7 +10,7 @@ dependencies:
   flutter:
     sdk: flutter
   path_provider: ^2.1.4
-  flutter_inappwebview: ^6.1.5     # 成熟 WebView 桥（编辑器内核宿主）
+  webview_flutter: ^4.14.1      # 官方 WebView 插件（Flutter 团队维护——编辑器内核宿主）
 
 dev_dependencies:
   flutter_test:

@@ -74,7 +74,9 @@ class FilesScreenState extends State<FilesScreen> {
         }
       }
       dirs.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
-      files.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+      files.sort(
+        (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+      );
       into
         ..clear()
         ..addAll(dirs)
@@ -90,11 +92,7 @@ class FilesScreenState extends State<FilesScreen> {
     setState(() {
       n.expanded = !n.expanded;
       if (n.expanded && !n.loaded) {
-        _loadChildren(
-          n.children,
-          '$_base/${n.rel}',
-          n.rel,
-        );
+        _loadChildren(n.children, '$_base/${n.rel}', n.rel);
         n.loaded = true;
       }
     });
@@ -134,10 +132,7 @@ class FilesScreenState extends State<FilesScreen> {
                   Expanded(
                     child: Text(
                       n.rel,
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: p.t2,
-                      ),
+                      style: TextStyle(fontSize: 13, color: p.t2),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -178,7 +173,8 @@ class FilesScreenState extends State<FilesScreen> {
         lines = '\n'.allMatches(t).length + 1;
       }
       final stat = await f.stat();
-      info = '路径：${n.rel}\n'
+      info =
+          '路径：${n.rel}\n'
           '大小：${fmtBytes(len)}\n'
           '行数：${lines > 0 ? lines : '—'}\n'
           '修改：${stat.modified.toString().substring(0, 19)}';
@@ -191,8 +187,7 @@ class FilesScreenState extends State<FilesScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: p.elev,
-        title: Text('文件信息',
-            style: TextStyle(fontSize: 16, color: p.t1)),
+        title: Text('文件信息', style: TextStyle(fontSize: 16, color: p.t1)),
         content: SelectableText(
           info,
           style: TextStyle(fontSize: 13, color: p.t2, height: 1.7),
@@ -244,8 +239,11 @@ class FilesScreenState extends State<FilesScreen> {
             children: [
               Icon(Icons.error_outline_rounded, color: p.red, size: 42),
               const SizedBox(height: 12),
-              Text(ws.error ?? '工作区初始化失败',
-                  style: TextStyle(color: p.t2), textAlign: TextAlign.center),
+              Text(
+                ws.error ?? '工作区初始化失败',
+                style: TextStyle(color: p.t2),
+                textAlign: TextAlign.center,
+              ),
               const SizedBox(height: 14),
               FilledButton(
                 onPressed: () => ws.ensure(force: true),
@@ -262,8 +260,9 @@ class FilesScreenState extends State<FilesScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             CircularProgressIndicator(
-                strokeWidth: 2.6,
-                color: Theme.of(context).colorScheme.primary),
+              strokeWidth: 2.6,
+              color: Theme.of(context).colorScheme.primary,
+            ),
             const SizedBox(height: 14),
             Text('正在准备源码…', style: TextStyle(color: p.t3, fontSize: 13)),
           ],
@@ -307,11 +306,12 @@ class FilesScreenState extends State<FilesScreen> {
         rows.addAll(_renderNode(c, depth + 1));
       }
       if (n.children.isEmpty) {
-        rows.add(Padding(
-          padding: EdgeInsets.only(left: 28.0 + depth * 22),
-          child: Text('（空）',
-              style: TextStyle(fontSize: 12, color: p.t4)),
-        ));
+        rows.add(
+          Padding(
+            padding: EdgeInsets.only(left: 28.0 + depth * 22),
+            child: Text('（空）', style: TextStyle(fontSize: 12, color: p.t4)),
+          ),
+        );
       }
     }
     return rows;
@@ -322,9 +322,7 @@ class FilesScreenState extends State<FilesScreen> {
     IconData icon;
     Color iconColor;
     if (n.isDir) {
-      icon = n.expanded
-          ? Icons.folder_open_rounded
-          : Icons.folder_rounded;
+      icon = n.expanded ? Icons.folder_open_rounded : Icons.folder_rounded;
       iconColor = n.expanded ? accent : p.t2;
     } else {
       final style = fileStyleFor(n.name, p);
@@ -336,10 +334,8 @@ class FilesScreenState extends State<FilesScreen> {
       child: InkWell(
         onTap: () => _toggle(n),
         onSecondaryTapDown: (d) => _showFileMenu(n, d),
-        onLongPress: () => _showFileMenu(
-          n,
-          TapDownDetails(globalPosition: Offset.zero),
-        ),
+        onLongPress: () =>
+            _showFileMenu(n, TapDownDetails(globalPosition: Offset.zero)),
         child: Padding(
           padding: EdgeInsets.only(
             left: 16.0 + depth * 20,
@@ -353,8 +349,11 @@ class FilesScreenState extends State<FilesScreen> {
                 AnimatedRotation(
                   turns: n.expanded ? .25 : 0,
                   duration: const Duration(milliseconds: 150),
-                  child: Icon(Icons.chevron_right_rounded,
-                      size: 16, color: p.t4),
+                  child: Icon(
+                    Icons.chevron_right_rounded,
+                    size: 16,
+                    color: p.t4,
+                  ),
                 )
               else
                 const SizedBox(width: 16),
@@ -367,8 +366,7 @@ class FilesScreenState extends State<FilesScreen> {
                   style: TextStyle(
                     fontSize: 13.5,
                     color: p.t1,
-                    fontWeight:
-                        n.isDir ? FontWeight.w600 : FontWeight.w400,
+                    fontWeight: n.isDir ? FontWeight.w600 : FontWeight.w400,
                   ),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,

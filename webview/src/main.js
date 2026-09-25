@@ -27,7 +27,16 @@ import { markdown } from '@codemirror/lang-markdown';
 import { yaml } from '@codemirror/lang-yaml';
 
 // ============ JS → Flutter 桥接 ============
+// 主通道：webview_flutter 官方插件的 JavaScriptChannel「PcvBridge」
+// 兼容通道：flutter_inappwebview callHandler（保留；浏览器调试时全部静默降级）
 function call(type, payload) {
+  const msg = JSON.stringify({ type: type, payload: payload === undefined ? null : payload });
+  try {
+    if (window.PcvBridge && typeof window.PcvBridge.postMessage === 'function') {
+      window.PcvBridge.postMessage(msg);
+      return;
+    }
+  } catch (e) { /* 忽略 */ }
   try {
     if (window.flutter_inappwebview && window.flutter_inappwebview.callHandler) {
       window.flutter_inappwebview.callHandler('pcv', type, payload || {});
@@ -163,7 +172,9 @@ function scheduleChanged() {
   if (changedTimer) clearTimeout(changedTimer);
   changedTimer = setTimeout(() => {
     changedTimer = null;
-    call('changed', { content: view.state.doc.toString() });
+    // 轻量事件：只通知"有改动"。正文由 Flutter 侧按需拉取（getContent）——
+    // 避免大文件每次输入都经消息通道传输全文。
+    call('changed', { dirty: 1, lines: view.state.doc.lines });
   }, 700);
 }
 function scheduleCursor() {

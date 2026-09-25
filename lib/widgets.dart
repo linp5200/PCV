@@ -69,10 +69,7 @@ class PcvCard extends StatelessWidget {
       ),
       clipBehavior: Clip.antiAlias,
       child: onTap == null
-          ? Padding(
-              padding: padding ?? const EdgeInsets.all(16),
-              child: child,
-            )
+          ? Padding(padding: padding ?? const EdgeInsets.all(16), child: child)
           : Material(
               color: Colors.transparent,
               child: InkWell(

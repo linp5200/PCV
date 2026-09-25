@@ -86,13 +86,11 @@ class SearchScreenState extends State<SearchScreen> {
               decoration: InputDecoration(
                 hintText: '搜索代码或文件…',
                 hintStyle: TextStyle(color: p.t4, fontSize: 14),
-                prefixIcon:
-                    Icon(Icons.search_rounded, size: 20, color: p.t3),
+                prefixIcon: Icon(Icons.search_rounded, size: 20, color: p.t3),
                 suffixIcon: _controller.text.isEmpty
                     ? null
                     : IconButton(
-                        icon: Icon(Icons.close_rounded,
-                            size: 18, color: p.t3),
+                        icon: Icon(Icons.close_rounded, size: 18, color: p.t3),
                         onPressed: () {
                           _controller.clear();
                           _run();
@@ -186,31 +184,33 @@ class SearchScreenState extends State<SearchScreen> {
           children: [
             Icon(Icons.manage_search_rounded, size: 46, color: p.t4),
             const SizedBox(height: 10),
-            Text('输入关键词开始搜索',
-                style: TextStyle(fontSize: 13.5, color: p.t3)),
+            Text('输入关键词开始搜索', style: TextStyle(fontSize: 13.5, color: p.t3)),
             const SizedBox(height: 4),
-            Text('全库检索 · 支持文件名与内容',
-                style: TextStyle(fontSize: 12, color: p.t4)),
+            Text(
+              '全库检索 · 支持文件名与内容',
+              style: TextStyle(fontSize: 12, color: p.t4),
+            ),
           ],
         ),
       );
     }
     if (out.total == 0 && out.nameHits.isEmpty) {
       return Center(
-        child: Text('未找到匹配结果',
-            style: TextStyle(fontSize: 13.5, color: p.t3)),
+        child: Text('未找到匹配结果', style: TextStyle(fontSize: 13.5, color: p.t3)),
       );
     }
     final rows = <Widget>[];
-    rows.add(Padding(
-      padding: const EdgeInsets.fromLTRB(20, 12, 20, 6),
-      child: Text(
-        '共 ${out.total} 处内容匹配 · ${out.groups.length} 个文件'
-        '${out.nameHits.isNotEmpty ? ' · ${out.nameHits.length} 个文件名匹配' : ''}'
-        '${out.truncated ? ' · 已截断' : ''}',
-        style: TextStyle(fontSize: 12, color: p.t3),
+    rows.add(
+      Padding(
+        padding: const EdgeInsets.fromLTRB(20, 12, 20, 6),
+        child: Text(
+          '共 ${out.total} 处内容匹配 · ${out.groups.length} 个文件'
+          '${out.nameHits.isNotEmpty ? ' · ${out.nameHits.length} 个文件名匹配' : ''}'
+          '${out.truncated ? ' · 已截断' : ''}',
+          style: TextStyle(fontSize: 12, color: p.t3),
+        ),
       ),
-    ));
+    );
     if (out.nameHits.isNotEmpty) {
       rows.add(const SectionLabel('文件名匹配'));
       for (final n in out.nameHits) {
@@ -226,10 +226,7 @@ class SearchScreenState extends State<SearchScreen> {
         rows.add(_hitRow(context, g.path, h, p));
       }
     }
-    return ListView(
-      padding: const EdgeInsets.only(bottom: 24),
-      children: rows,
-    );
+    return ListView(padding: const EdgeInsets.only(bottom: 24), children: rows);
   }
 
   Widget _nameRow(BuildContext context, String rel, Pal p) {
@@ -245,10 +242,12 @@ class SearchScreenState extends State<SearchScreen> {
               Icon(style.$1, size: 16, color: style.$2),
               const SizedBox(width: 10),
               Expanded(
-                child: Text(rel,
-                    style: TextStyle(fontSize: 13, color: p.t1),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis),
+                child: Text(
+                  rel,
+                  style: TextStyle(fontSize: 13, color: p.t1),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
               Icon(Icons.chevron_right, size: 16, color: p.t4),
             ],
@@ -334,7 +333,11 @@ class SearchScreenState extends State<SearchScreen> {
                 ),
               ),
               const SizedBox(width: 8),
-              Icon(Icons.arrow_forward_rounded, size: 14, color: accent.withValues(alpha: .7)),
+              Icon(
+                Icons.arrow_forward_rounded,
+                size: 14,
+                color: accent.withValues(alpha: .7),
+              ),
             ],
           ),
         ),

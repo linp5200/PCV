@@ -100,9 +100,9 @@ const accentPresets = <AccentPreset>[
 ];
 
 AccentPreset accentOf(String id) => accentPresets.firstWhere(
-      (a) => a.id == id,
-      orElse: () => accentPresets.first,
-    );
+  (a) => a.id == id,
+  orElse: () => accentPresets.first,
+);
 
 // ============ 语法配色 ============
 
@@ -197,12 +197,11 @@ TextStyle monoStyle({
   FontWeight weight = FontWeight.w400,
   Color? color,
   double height = 1.6,
-}) =>
-    TextStyle(
-      fontFamily: 'JetBrainsMono',
-      fontFamilyFallback: kMonoFallback,
-      fontSize: size,
-      fontWeight: weight,
-      color: color,
-      height: height,
-    );
+}) => TextStyle(
+  fontFamily: 'JetBrainsMono',
+  fontFamilyFallback: kMonoFallback,
+  fontSize: size,
+  fontWeight: weight,
+  color: color,
+  height: height,
+);

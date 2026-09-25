@@ -109,11 +109,11 @@ class _HomeScreenState extends State<HomeScreen> {
                       Text(
                         ready
                             ? 'LINGOS ${ws.meta['version'] ?? ''} · '
-                                '${ws.meta['file_count'] ?? 0} 个文件 · '
-                                '${fmtBytes((ws.meta['byte_count'] as int?) ?? 0)}'
+                                  '${ws.meta['file_count'] ?? 0} 个文件 · '
+                                  '${fmtBytes((ws.meta['byte_count'] as int?) ?? 0)}'
                             : ws.phase == WPhase.error
-                                ? '初始化失败'
-                                : '正在准备…',
+                            ? '初始化失败'
+                            : '正在准备…',
                         style: TextStyle(fontSize: 12, color: p.t3),
                       ),
                     ],
@@ -202,11 +202,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (!ready) {
       return Pill(text: '准备中', fg: p.yellow, bg: tintOf(p.yellow, p.dark));
     }
-    return Pill(
-      text: '● 已就绪',
-      fg: p.green,
-      bg: tintOf(p.green, p.dark),
-    );
+    return Pill(text: '● 已就绪', fg: p.green, bg: tintOf(p.green, p.dark));
   }
 
   Widget _quickGrid(BuildContext context) {
@@ -258,17 +254,14 @@ class _HomeScreenState extends State<HomeScreen> {
         mainAxisSpacing: 10,
         crossAxisSpacing: 10,
         childAspectRatio: 1.42,
-        children: [
-          for (final it in items) _QuickCard(it: it),
-        ],
+        children: [for (final it in items) _QuickCard(it: it)],
       ),
     );
   }
 
   void _soon(BuildContext context, String name) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('$name：将在后续版本提供（A3/A4/A5 阶段）')),
-    );
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text('$name：将在后续版本提供（A3/A4/A5 阶段）')));
   }
 
   Widget _recentCard(BuildContext context) {
