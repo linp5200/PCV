@@ -388,14 +388,19 @@ function makeState(content, path) {
 // ============ 对外 API（Flutter 通过 evaluateJavascript 调用 window.pcv.*） ============
 window.pcv = {
   openFile(path, content, opts) {
-    opts = opts || {};
-    currentPath = path || '';
-    if (typeof opts.dark === 'boolean') currentDark = opts.dark;
-    if (typeof opts.fontPx === 'number') currentFont = opts.fontPx;
-    view.setState(makeState(content, currentPath));
-    view.scrollDOM.scrollTop = 0;
-    document.body.style.background = (currentDark ? DARK_UI : LIGHT_UI).bg;
-    call('fileOpened', { path: currentPath, lines: view.state.doc.lines });
+    try {
+      opts = opts || {};
+      currentPath = path || '';
+      if (typeof opts.dark === 'boolean') currentDark = opts.dark;
+      if (typeof opts.fontPx === 'number') currentFont = opts.fontPx;
+      view.setState(makeState(content, currentPath));
+      view.scrollDOM.scrollTop = 0;
+      document.body.style.background = (currentDark ? DARK_UI : LIGHT_UI).bg;
+      call('fileOpened', { path: currentPath, lines: view.state.doc.lines });
+    } catch (e) {
+      // 上报失败详情（诊断用——否则静默显示占位内容无法排查）
+      call('jsError', { where: 'openFile', msg: String((e && e.message) || e) });
+    }
   },
   setTheme(dark) {
     currentDark = !!dark;

@@ -47,13 +47,15 @@ class EditorScreen extends StatefulWidget {
 class _EditorScreenState extends State<EditorScreen> {
   static String? _htmlCache;
 
-  WebViewController? _web;
+  WebViewController? _controller;
   bool _webReady = false;
   bool _fileSent = false;
+  int _bootAttempts = 0;
   bool _leaving = false;
   bool _dirty = false;
   bool _draftRestored = false;
   bool _saving = false;
+  String? _html;
 
   int _lines = 0;
   int _line = 1;
@@ -83,7 +85,22 @@ class _EditorScreenState extends State<EditorScreen> {
   @override
   void initState() {
     super.initState();
+    _loadHtml();
     _load();
+  }
+
+  /// 加载编辑器内核 HTML（一次性——修复旧版 FutureBuilder 每帧新建 Future
+  /// 导致 WebView 被反复移除/重建、无法编辑的严重 bug）
+  Future<void> _loadHtml() async {
+    try {
+      final html =
+          _htmlCache ??
+          await rootBundle.loadString('assets/webview/editor.html');
+      _htmlCache = html;
+      if (mounted) setState(() => _html = html);
+    } catch (e) {
+      if (mounted) setState(() => _loadError = '编辑器内核加载失败：$e');
+    }
   }
 
   String? _pendingContent;
@@ -119,16 +136,12 @@ class _EditorScreenState extends State<EditorScreen> {
     _bootWebView();
   }
 
-  Future<String> _editorHtml() async {
-    if (_htmlCache != null) return _htmlCache!;
-    _htmlCache = await rootBundle.loadString('assets/webview/editor.html');
-    return _htmlCache!;
-  }
-
   Future<void> _bootWebView() async {
-    final web = _web;
+    final web = _controller;
     final content = _pendingContent;
     if (web == null || !_webReady || _fileSent || content == null) return;
+    if (_bootAttempts >= 3) return;
+    _bootAttempts++;
     _fileSent = true;
     final dark = Theme.of(context).brightness == Brightness.dark;
     final js =
@@ -144,7 +157,14 @@ class _EditorScreenState extends State<EditorScreen> {
         ScaffoldMessenger.of(context)
             .showSnackBar(const SnackBar(content: Text('已恢复未保存的修改')));
       }
-    } catch (_) {}
+    } catch (e) {
+      // 失败允许重试（最多 3 次）——旧版失败后永不重发，文件内容再也进不去
+      _fileSent = false;
+      if (_bootAttempts < 3 && mounted) {
+        await Future<void>.delayed(const Duration(milliseconds: 800));
+        if (mounted) await _bootWebView();
+      }
+    }
   }
 
   // ---------- JS 事件 ----------
@@ -175,6 +195,15 @@ class _EditorScreenState extends State<EditorScreen> {
         // 真正有文档变更才到这里（CM6 docChanged）→ 写防丢失草稿
         _setDirty(true);
         _saveDraftSoon();
+        break;
+      case 'jsError':
+        // 内核侧异常上报（诊断关键——否则静默失败无法排查）
+        if (payload is Map && mounted) {
+          final msg = payload['msg']?.toString() ?? '未知错误';
+          final where = payload['where']?.toString() ?? '';
+          ScaffoldMessenger.of(context)
+              .showSnackBar(SnackBar(content: Text('编辑器内核错误[$where]：$msg')));
+        }
         break;
       case 'fontChanged':
         if (payload is Map) {
@@ -210,7 +239,7 @@ class _EditorScreenState extends State<EditorScreen> {
 
   Future<String?> _grabContent() async {
     try {
-      final r = await _web?.runJavaScriptReturningResult(
+      final r = await _controller?.runJavaScriptReturningResult(
         'window.pcv.getContent()',
       );
       if (r == null) return null;
@@ -368,7 +397,7 @@ class _EditorScreenState extends State<EditorScreen> {
     if (!mounted || action == null) return;
     switch (action) {
       case 'search':
-        await _web?.runJavaScript("window.pcv.search('');");
+        await _controller?.runJavaScript("window.pcv.search('');");
         break;
       case 'gotoline':
         await _goToLineDialog();
@@ -411,7 +440,7 @@ class _EditorScreenState extends State<EditorScreen> {
       ),
     );
     if (n != null && n >= 1) {
-      await _web?.runJavaScript('window.pcv.goToLine($n);');
+      await _controller?.runJavaScript('window.pcv.goToLine($n);');
     }
   }
 
@@ -444,7 +473,7 @@ class _EditorScreenState extends State<EditorScreen> {
       if (df != null && await df.exists()) await df.delete();
       final content = await _srcFile?.readAsString() ?? '';
       final dark = Theme.of(context).brightness == Brightness.dark;
-      await _web?.runJavaScript(
+      await _controller?.runJavaScript(
         'window.pcv.openFile('
         '${jsonEncode(_rel)}, ${jsonEncode(content)}, '
         '{"dark": $dark, "fontPx": ${widget.settings.codeFontSize}});',
@@ -566,25 +595,22 @@ class _EditorScreenState extends State<EditorScreen> {
         ),
       );
     }
-    return FutureBuilder<String>(
-      future: _editorHtml(),
-      builder: (context, snap) {
-        if (!snap.hasData) {
-          return Center(
-            child: CircularProgressIndicator(
-              strokeWidth: 2.6,
-              color: Theme.of(context).colorScheme.primary,
-            ),
-          );
-        }
-        return WebViewWidget(controller: _makeController(snap.data!));
-      },
-    );
+    // 内核 HTML 一次性加载（字段缓存）——修复旧版每帧新建 Future 导致
+    // WebView 被反复移除/重建（表现为无法编辑、内容不加载）
+    final html = _html;
+    if (html == null) {
+      return Center(
+        child: CircularProgressIndicator(
+          strokeWidth: 2.6,
+          color: Theme.of(context).colorScheme.primary,
+        ),
+      );
+    }
+    _controller ??= _makeController(html);
+    return WebViewWidget(controller: _controller!);
   }
 
-  WebViewController? _controller;
   WebViewController _makeController(String html) {
-    if (_controller != null) return _controller!;
     final c = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(const Color(0xFF1F2335))
@@ -598,7 +624,6 @@ class _EditorScreenState extends State<EditorScreen> {
         },
       )
       ..loadHtmlString(html, baseUrl: 'https://pcv.local/');
-    _web = c;
     return c;
   }
 
