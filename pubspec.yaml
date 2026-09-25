@@ -1,0 +1,30 @@
+name: pcv_workbench
+description: "PCV · 便携代码图形化工作台（Portable Code Visual Workbench）——在手机上开发与理解代码"
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: '>=3.4.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  path_provider: ^2.1.4
+  flutter_inappwebview: ^6.1.5     # 成熟 WebView 桥（编辑器内核宿主）
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/source/lingos-source-v0.7.2.pak.gz
+    - assets/webview/editor.html
+  fonts:
+    - family: JetBrainsMono
+      fonts:
+        - asset: assets/fonts/JetBrainsMono-Regular.ttf
+        - asset: assets/fonts/JetBrainsMono-Medium.ttf
+          weight: 500
